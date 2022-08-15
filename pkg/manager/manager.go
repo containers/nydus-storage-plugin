@@ -25,14 +25,6 @@ import (
 	"github.com/containers/nydus-storage-plugin/pkg/source"
 )
 
-const (
-	remoteSnapshotLogKey = "remote-snapshot-prepared"
-	prepareSucceeded     = "true"
-	prepareFailed        = "false"
-
-	defaultMaxConcurrency = 2
-)
-
 func NewLayerManager(ctx context.Context, rootDir string, hosts source.RegistryHosts, cfg *config.Config) (*LayerManager, error) {
 	verifier, err := signature.NewVerifier(cfg.PublicKeyFile, cfg.ValidateSignature)
 	if err != nil {

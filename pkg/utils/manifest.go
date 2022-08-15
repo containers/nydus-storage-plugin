@@ -5,6 +5,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/containerd/containerd/images"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )

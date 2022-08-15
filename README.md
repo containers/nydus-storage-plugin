@@ -30,53 +30,18 @@ $ sudo mv nydus-static/nydus-image /usr/bin/nydus-image
 
 3. Configure podman
 
-Get an `/etc/containers/storage.conf` example from [here](https://github.com/containers/podman/blob/main/vendor/github.com/containers/storage/storage.conf), and add with `[storage.options]` section like:
+Replace `/etc/containers/storage.conf` with `misc/storage.conf`.
 
-```shell
-[storage.options]
-additionallayerstores = [
-  "/var/lib/nydus-store/store:ref"
-]
-```
 
 Make sure you have created the directory with `mkdir -p /var/lib/nydus-store/store`.
 
 4. Run store plugin
 
-Prepare a nydus configuration JSON file like below, named as `/etc/nydusd-config.json`:
-
-```json
-{
-  "device": {
-    "backend": {
-      "type": "registry",
-      "config": {
-        "scheme": "http",
-        "timeout": 5,
-        "connect_timeout": 5,
-        "retry_limit": 2
-      }
-    },
-    "cache": {
-      "type": "blobcache",
-      "config": {
-        "work_dir": "/var/lib/nydus/cache"
-      }
-    }
-  },
-  "mode": "direct",
-  "digest_validate": false,
-  "iostats_files": false,
-  "enable_xattr": true,
-  "fs_prefetch": {
-    "enable": true,
-    "threads_count": 2
-  }
-}
-```
+Copy `misc/nydusd-config.json` to `/etc`.
 
 ```shell
-$ sudo ./main --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store
+$ make build
+$ sudo bin/nydus-store --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store
 ```
 
 5. Convert a nydus image
