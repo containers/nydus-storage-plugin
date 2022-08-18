@@ -76,7 +76,7 @@ Prepare a nydus configuration JSON file like below, named as `/etc/nydusd-config
 ```
 
 ```shell
-$ sudo ./store --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store
+$ sudo ./main --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store
 ```
 
 5. Convert a nydus image
