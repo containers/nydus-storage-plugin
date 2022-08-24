@@ -4,7 +4,6 @@ package fs
 
 import (
 	"context"
-	_ "crypto/sha256"
 	"syscall"
 
 	"github.com/containerd/containerd/log"
