@@ -44,8 +44,14 @@ func main() {
 			}
 
 			mountPoint := fmt.Sprintf("%s/store", flags.Args.RootDir)
-			if err := os.MkdirAll(mountPoint, 0755); err != nil {
-				return errors.Wrap(err, "mkdir dir store failed")
+			if _, err := os.Stat(mountPoint); err != nil {
+				if os.IsNotExist(err) {
+					if err := os.MkdirAll(mountPoint, 0755); err != nil {
+						return errors.Wrapf(err, "create root directory %s", mountPoint)
+					}
+				} else {
+					return errors.Wrapf(err, "stat root directory %s", mountPoint)
+				}
 			}
 
 			// replace it with nydus-snapshotter resolver.
