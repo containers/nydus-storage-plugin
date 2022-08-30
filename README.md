@@ -14,7 +14,7 @@ The project is an implementation of additional layer store plugin of CRI-O/Podma
 ```shell
 $ git clone https://github.com/containers/nydus-storage-plugin.git
 $ cd nydus-storage-plugin
-$ go build cmd/store/main.go
+$ make
 ```
 
 2. Install nydusd
@@ -32,16 +32,14 @@ $ sudo mv nydus-static/nydus-image /usr/bin/nydus-image
 
 Replace `/etc/containers/storage.conf` with `misc/storage.conf`.
 
-
-Make sure you have created the directory with `mkdir -p /var/lib/nydus-store/store`.
-
 4. Run store plugin
 
 Copy `misc/nydusd-config.json` to `/etc`.
 
 ```shell
-$ make build
-$ sudo bin/nydus-store --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store
+$ sudo bin/nydus-store --log-to-stdout --log-level debug \
+  --config-path /etc/nydusd-config.json \
+  --root /var/lib/nydus-store
 ```
 
 5. Convert a nydus image
