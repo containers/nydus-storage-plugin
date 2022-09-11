@@ -65,6 +65,7 @@ func main() {
 				log.G(c.Context).WithError(err).Fatalf("failed to mount fs at %q", mountPoint)
 			}
 			defer func() {
+				layManager.ReleaseAll(c.Context)
 				err := syscall.Unmount(mountPoint, 0)
 				if err != nil {
 					log.G(c.Context).Error(err)
