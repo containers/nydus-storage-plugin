@@ -66,7 +66,7 @@ func (n *refNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 		log.G(ctx).WithError(err).Warnf("invalid digest for %q during release", name)
 		return syscall.EINVAL
 	}
-	current, err := n.fs.layManager.Release(ctx, n.ref, targetDigest)
+	current, err := n.fs.layManager.Release(ctx, n.ref, targetDigest, n.rawRef)
 	if err != nil {
 		log.G(ctx).WithError(err).Warnf("failed to release layer %v / %v", n.ref, targetDigest)
 		return syscall.EIO

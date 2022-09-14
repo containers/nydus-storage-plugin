@@ -25,6 +25,10 @@ import (
 	"github.com/containers/nydus-storage-plugin/pkg/source"
 )
 
+type nydusMessage struct {
+	Err error
+}
+
 func NewLayerManager(ctx context.Context, rootDir string, hosts source.RegistryHosts, cfg *config.Config) (*LayerManager, error) {
 	verifier, err := signature.NewVerifier(cfg.PublicKeyFile, cfg.ValidateSignature)
 	if err != nil {
@@ -99,14 +103,14 @@ type LayerManager struct {
 }
 
 func (r *LayerManager) GetLayerInfo(ctx context.Context, refspec reference.Spec, dgst digest.Digest) (Layer, error) {
-	manifest, config, err := r.refPool.loadRef(ctx, refspec)
+	manifest, imageConfig, err := r.refPool.loadRef(ctx, refspec)
 	if err != nil {
 		return Layer{}, fmt.Errorf("failed to get manifest and config: %w", err)
 	}
-	return genLayerInfo(dgst, manifest, config)
+	return genLayerInfo(dgst, manifest, imageConfig)
 }
 
-func (r *LayerManager) ResolverMetaLayer(ctx context.Context, refspec reference.Spec, rawRef string, digest digest.Digest) (*ocispec.Descriptor, error) {
+func (r *LayerManager) ResolverMetaLayer(ctx context.Context, refspec reference.Spec, snapshotID string, digest digest.Digest) (*ocispec.Descriptor, error) {
 	// get manifest from cache.
 	manifest, _, err := r.refPool.loadRef(ctx, refspec)
 	if err != nil {
@@ -131,56 +135,78 @@ func (r *LayerManager) ResolverMetaLayer(ctx context.Context, refspec reference.
 		target.Annotations[label.CRIImageRef] = refspec.String()
 		target.Annotations[label.CRILayerDigest] = target.Digest.String()
 
-		workdir := r.nydusFs.UpperPath(rawRef)
-		if _, err := os.Stat(workdir); os.IsNotExist(err) {
+		if _, ok = r.nydusMetaLayer.Load(snapshotID); ok {
+			log.G(ctx).Warnf("nydus duplicate mount meta layer ref is %s digest is %s", refspec.String(), target.Digest.String())
+			return &target, nil
+		}
+
+		workdir := r.nydusFs.UpperPath(snapshotID)
+		if _, err = os.Stat(workdir); os.IsNotExist(err) {
 			if err = os.MkdirAll(workdir, 0755); err != nil {
-				log.G(ctx).Errorf("mkdir nydus snapshot dir failed: %+v", err)
+				log.G(ctx).WithError(err).Error("mkdir nydus snapshot dir failed")
 				return nil, err
 			}
 		}
 
 		// Download nydus bootstrap layer to disk.
-		err = r.nydusFs.PrepareMetaLayer(ctx, storage.Snapshot{ID: rawRef}, target.Annotations)
+		err = r.nydusFs.PrepareMetaLayer(ctx, storage.Snapshot{ID: snapshotID}, target.Annotations)
 		if err != nil && !strings.Contains(err.Error(), "file exists") {
-			log.G(ctx).Errorf("download snapshot files failed: %+v", err)
+			log.G(ctx).WithError(err).Error("download snapshot files failed")
 			return nil, err
 		}
 
+		nydusMsgChannel := make(chan nydusMessage)
+
 		go func() {
 			log.G(ctx).Debugf("nydus mount meta layer ref is %s digest is %s", refspec.String(), target.Digest.String())
-
-			if _, ok := r.nydusMetaLayer.Load(refspec.String()); ok {
-				log.G(ctx).Warnf("nydus duplicate mount meta layer ref is %s digest is %s", refspec.String(), target.Digest.String())
-				return
-			}
-
-			err = r.nydusFs.Mount(ctx, rawRef, target.Annotations)
+			err = r.nydusFs.Mount(ctx, snapshotID, target.Annotations)
 			if err != nil {
-				log.G(ctx).Errorf("nydus mount failed: %+v", err)
+				log.G(ctx).WithError(err).Error("nydus mount failed")
+				nydusMsgChannel <- nydusMessage{
+					Err: err,
+				}
 				return
 			}
 
-			// Link nydusd mount dir to <mountpoint>/<ref>/<digest>/<diff>
-			targetPath := fmt.Sprintf("%s/store/%s/%s/diff", r.rootDir, rawRef, target.Digest.String())
-			mountPoint, err := r.nydusFs.MountPoint(rawRef)
-			if err == nil {
-				cmd := exec.Command("mount", "-o", "bind,ro", mountPoint, targetPath)
-				err = cmd.Run()
-				if err != nil {
-					log.G(ctx).Errorf("mount bind file has error: %+v", err)
-					return
-				}
-				r.nydusMetaLayer.Store(refspec.String(), targetPath)
-			} else {
-				log.G(ctx).Errorf("get mount point failed: %+v", err)
+			nydusMsgChannel <- nydusMessage{
+				Err: nil,
 			}
 		}()
+
+		event := <-nydusMsgChannel
+		if event.Err != nil {
+			return nil, event.Err
+		}
+
+		err = r.nydusFs.WaitUntilReady(ctx, snapshotID)
+		if err != nil {
+			return nil, err
+		}
+
+		// Link nydusd mount dir to <mountpoint>/<ref>/<digest>/<diff>
+		targetPath := fmt.Sprintf("%s/store/%s/%s/diff", r.rootDir, snapshotID, target.Digest.String())
+		var mountPoint string
+		if mountPoint, err = r.nydusFs.MountPoint(snapshotID); err == nil {
+			cmd := exec.Command("mount", "-o", "bind,ro", mountPoint, targetPath)
+			if err = cmd.Start(); err == nil {
+				r.nydusMetaLayer.Store(snapshotID, targetPath)
+				return &target, nil
+			}
+			log.G(ctx).WithError(err).Error("mount bind file has error")
+			return nil, err
+		}
+		log.G(ctx).WithError(err).Error("get mount point failed")
+		return nil, err
 	}
+	// TODO support normal image format.
 	return &target, nil
 }
 
-func (r *LayerManager) Release(ctx context.Context, refspec reference.Spec, dgst digest.Digest) (int, error) {
-	r.refPool.release(refspec)
+func (r *LayerManager) Release(ctx context.Context, refspec reference.Spec, dgst digest.Digest, snapshotID string) (int, error) {
+	_, err := r.refPool.release(refspec)
+	if err != nil {
+		return 0, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -192,13 +218,13 @@ func (r *LayerManager) Release(ctx context.Context, refspec reference.Spec, dgst
 	r.refCounter[refspec.String()][dgst.String()]--
 	i := r.refCounter[refspec.String()][dgst.String()]
 	if i <= 0 {
-		if v, ok := r.nydusMetaLayer.Load(refspec.String()); ok {
+		if v, ok := r.nydusMetaLayer.Load(snapshotID); ok {
 			cmd := exec.Command("umount", v.(string))
 			if err := cmd.Run(); err != nil {
 				log.G(ctx).Errorf("umount bind nydus %v/%v failed: %+v", refspec, dgst, err)
 				return 0, err
 			}
-			r.nydusMetaLayer.Delete(refspec.String())
+			r.nydusMetaLayer.Delete(snapshotID)
 		}
 
 		// No reference to this layer. release it.
@@ -209,6 +235,16 @@ func (r *LayerManager) Release(ctx context.Context, refspec reference.Spec, dgst
 		log.G(ctx).WithField("refcounter", i).Infof("layer %v/%v is released due to no reference", refspec, dgst)
 	}
 	return i, nil
+}
+
+func (r *LayerManager) ReleaseAll(ctx context.Context) {
+	r.nydusMetaLayer.Range(func(key, value interface{}) bool {
+		cmd := exec.Command("umount", value.(string))
+		if err := cmd.Run(); err != nil {
+			log.G(ctx).WithError(err).Warnf("umount bind nydus %v/%v failed", key, value)
+		}
+		return true
+	})
 }
 
 func (r *LayerManager) Use(refspec reference.Spec, dgst digest.Digest) int {
