@@ -45,3 +45,5 @@ require (
 	google.golang.org/grpc v1.43.0 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
 )
+
+replace github.com/containerd/nydus-snapshotter => github.com/fatelei/nydus-snapshotter v0.3.0-alpha.7

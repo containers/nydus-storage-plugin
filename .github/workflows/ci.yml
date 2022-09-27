@@ -42,10 +42,8 @@ jobs:
           sudo mv nydus-static/nydusd-fusedev /usr/bin/nydusd
           sudo mv nydus-static/nydusify /usr/bin/nydusify
           sudo mv nydus-static/nydus-image /usr/bin/nydus-image
-          sudo podman run -d -it -p 5000:5000 --name registry docker.io/library/registry:2
-          sudo nydusify convert --source ubuntu --target localhost:5000/ubuntu:latest-nydus
           sudo mkdir -p /var/lib/nydus-store
           sudo cp misc/nydus-config.json /etc/nydusd-config.json
           sudo cp misc/storage.conf /etc/containers/storage.conf
           nohup sudo bin/nydus-store --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store &
-          sudo podman run -it --tls-verify=false --rm localhost:5000/ubuntu:latest-nydus echo hello word
+          sudo podman run -it ghcr.io/dragonflyoss/image-service/nginx:nydus-latest echo hello word
