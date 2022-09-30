@@ -23,8 +23,7 @@ Download nydus binaries from [nydus release](https://github.com/dragonflyoss/ima
 
 ```shell
 $ tar xzvf nydus-static-$version-linux-amd64.tgz
-$ sudo mv nydus-static/nydusd-fusedev /usr/bin/nydusd
-$ sudo mv nydus-static/nydusify /usr/bin/nydusify
+$ sudo mv nydus-static/nydusd /usr/bin/nydusd
 $ sudo mv nydus-static/nydus-image /usr/bin/nydus-image
 ```
 
@@ -42,18 +41,10 @@ $ sudo bin/nydus-store --log-to-stdout --log-level debug \
   --root /var/lib/nydus-store
 ```
 
-5. Convert a nydus image
+5. Run container with nydus image
 
 ```shell
-# Prepare a local registry
-$ podman run -d -it -p 5000:5000 --name registry docker.io/library/registry:2
-
-# Convert OCI v1 image to nydus image:
-$ sudo nydusify convert --source ubuntu --target localhost:5000/ubuntu:latest-nydus
+$ sudo podman run -it ghcr.io/dragonflyoss/image-service/nginx:nydus-latest echo hello word
 ```
 
-6. Run container with nydus image
-
-```shell
-$ sudo podman run -it --tls-verify=false --rm localhost:5000/ubuntu:latest-nydus /bin/bash
-```
+For the list of pre-converted nydus images, see [nydus packages](https://github.com/orgs/dragonflyoss/packages?page=1&repo_name=image-service), for more details about how to build nydus image, please refer to [nydusify](https://github.com/dragonflyoss/image-service/blob/master/docs/nydusify.md) conversion tool and [acceld](https://github.com/goharbor/acceleration-service).
