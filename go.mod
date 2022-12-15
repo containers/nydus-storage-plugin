@@ -3,7 +3,7 @@ module github.com/containers/nydus-storage-plugin
 go 1.18
 
 require (
-	github.com/containerd/containerd v1.6.10
+	github.com/containerd/containerd v1.6.12
 	github.com/containerd/nydus-snapshotter v0.3.0-alpha.4
 	github.com/docker/cli v20.10.21+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
