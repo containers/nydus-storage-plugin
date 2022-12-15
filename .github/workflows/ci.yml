@@ -36,14 +36,14 @@ jobs:
           make build
       - name: Test
         run: |
-          export NYDUS_VERSION=v2.0.1
+          export NYDUS_VERSION=v2.1.2
           curl -L https://github.com/dragonflyoss/image-service/releases/download/$NYDUS_VERSION/nydus-static-$NYDUS_VERSION-linux-amd64.tgz > nydus-static-$NYDUS_VERSION-linux-amd64.tgz
           tar xzvf nydus-static-$NYDUS_VERSION-linux-amd64.tgz
-          sudo mv nydus-static/nydusd-fusedev /usr/bin/nydusd
+          sudo mv nydus-static/nydusd /usr/bin/nydusd
           sudo mv nydus-static/nydusify /usr/bin/nydusify
           sudo mv nydus-static/nydus-image /usr/bin/nydus-image
           sudo mkdir -p /var/lib/nydus-store
           sudo cp misc/nydus-config.json /etc/nydusd-config.json
           sudo cp misc/storage.conf /etc/containers/storage.conf
-          nohup sudo bin/nydus-store --log-to-stdout --log-level debug --config-path /etc/nydusd-config.json --root /var/lib/nydus-store &
+          nohup sudo bin/nydus-store --log-to-stdout --log-level info --config-path /etc/nydusd-config.json --root /var/lib/nydus-store &
           sudo podman run -it ghcr.io/dragonflyoss/image-service/nginx:nydus-latest echo hello word

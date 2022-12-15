@@ -36,7 +36,7 @@ Replace `/etc/containers/storage.conf` with `misc/storage.conf`.
 Copy `misc/nydusd-config.json` to `/etc`.
 
 ```shell
-$ sudo bin/nydus-store --log-to-stdout --log-level debug \
+$ sudo bin/nydus-store --log-to-stdout --log-level info \
   --config-path /etc/nydusd-config.json \
   --root /var/lib/nydus-store
 ```
