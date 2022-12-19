@@ -3,7 +3,7 @@ module github.com/containers/nydus-storage-plugin
 go 1.18
 
 require (
-	github.com/containerd/containerd v1.6.12
+	github.com/containerd/containerd v1.6.13
 	github.com/containerd/nydus-snapshotter v0.3.0-alpha.4
 	github.com/docker/cli v20.10.22+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
@@ -18,7 +18,7 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.5.2 // indirect
-	github.com/Microsoft/hcsshim v0.9.5 // indirect
+	github.com/Microsoft/hcsshim v0.9.6 // indirect
 	github.com/containerd/cgroups v1.0.3 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.11.4 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
