@@ -10,7 +10,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.2.0
 	github.com/hashicorp/go-retryablehttp v0.7.2
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799
+	github.com/opencontainers/image-spec v1.1.0-rc2
 	github.com/pkg/errors v0.9.1
 	github.com/urfave/cli/v2 v2.24.3
 	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
