@@ -12,22 +12,18 @@ jobs:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
+      - name: Check out code
+        uses: actions/checkout@v3
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.18'
-      - name: Check out code
-        uses: actions/checkout@v3
-      - name: cache go mod
-        uses: actions/cache@v3
+      - name: Login ghcr
+        uses: docker/login-action@v2
         with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go
-      - name: Log in to registry
-        # This is where you will update the PAT to GITHUB_TOKEN
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.48.0
@@ -36,12 +32,9 @@ jobs:
           make build
       - name: Test
         run: |
-          export NYDUS_VERSION=v2.1.2
-          curl -L https://github.com/dragonflyoss/image-service/releases/download/$NYDUS_VERSION/nydus-static-$NYDUS_VERSION-linux-amd64.tgz > nydus-static-$NYDUS_VERSION-linux-amd64.tgz
-          tar xzvf nydus-static-$NYDUS_VERSION-linux-amd64.tgz
-          sudo mv nydus-static/nydusd /usr/bin/nydusd
-          sudo mv nydus-static/nydusify /usr/bin/nydusify
-          sudo mv nydus-static/nydus-image /usr/bin/nydus-image
+          NYDUS_VERSION=v2.1.6
+          wget https://github.com/dragonflyoss/image-service/releases/download/$NYDUS_VERSION/nydus-static-$NYDUS_VERSION-linux-amd64.tgz
+          sudo tar xzvf nydus-static-$NYDUS_VERSION-linux-amd64.tgz --wildcards --strip-components=1 -C /usr/bin/ nydus-static/*
           sudo mkdir -p /var/lib/nydus-store
           sudo cp misc/nydus-config.json /etc/nydusd-config.json
           sudo cp misc/storage.conf /etc/containers/storage.conf
