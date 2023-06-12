@@ -8,7 +8,7 @@ require (
 	github.com/docker/cli v23.0.0+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
 	github.com/hanwen/go-fuse/v2 v2.3.0
-	github.com/hashicorp/go-retryablehttp v0.7.2
+	github.com/hashicorp/go-retryablehttp v0.7.4
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.0-rc2.0.20221005185240-3a7f492d3f1b
 	github.com/pkg/errors v0.9.1
