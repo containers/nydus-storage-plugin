@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/containerd/containerd v1.6.19
 	github.com/containerd/nydus-snapshotter v0.3.0-alpha.4
-	github.com/docker/cli v25.0.1+incompatible
+	github.com/docker/cli v25.0.4+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
 	github.com/hanwen/go-fuse/v2 v2.5.0
 	github.com/hashicorp/go-retryablehttp v0.7.5
