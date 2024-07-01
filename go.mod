@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/containerd/containerd v1.6.19
 	github.com/containerd/nydus-snapshotter v0.3.0-alpha.4
-	github.com/docker/cli v26.1.4+incompatible
+	github.com/docker/cli v27.0.2+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
 	github.com/hanwen/go-fuse/v2 v2.5.1
 	github.com/hashicorp/go-retryablehttp v0.7.7
@@ -25,7 +25,6 @@ require (
 	github.com/containerd/stargz-snapshotter/estargz v0.14.3 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
-	github.com/docker/docker v23.0.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.7.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
