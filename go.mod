@@ -1,6 +1,6 @@
 module github.com/containers/nydus-storage-plugin
 
-go 1.18
+go 1.23.0
 
 require (
 	github.com/containerd/containerd v1.6.19
@@ -13,7 +13,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/pkg/errors v0.9.1
 	github.com/urfave/cli/v2 v2.27.5
-	golang.org/x/sync v0.8.0
+	golang.org/x/sync v0.14.0
 )
 
 require (
