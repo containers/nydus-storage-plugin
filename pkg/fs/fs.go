@@ -92,7 +92,7 @@ func Mount(ctx context.Context, mountPoint string, rootDir string, debug bool, l
 		NullPermissions: true,
 	})
 	mountOpts := &fuse.MountOptions{
-		AllowOther: true, // allow users other than root&mounter to access fs
+		AllowOther: false, // allow users other than root&mounter to access fs
 		FsName:     "nydusstore",
 		Debug:      debug,
 	}

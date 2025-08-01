@@ -1,0 +1,340 @@
+/*
+ * Copyright (c) 2020. Ant Group. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+package process
+
+import (
+	"context"
+	stderrors "errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"syscall"
+
+	"github.com/containerd/containerd/log"
+	"github.com/pkg/errors"
+
+	"github.com/containerd/nydus-snapshotter/config"
+	"github.com/containerd/nydus-snapshotter/pkg/daemon"
+	"github.com/containerd/nydus-snapshotter/pkg/errdefs"
+	"github.com/containerd/nydus-snapshotter/pkg/store"
+	"github.com/containerd/nydus-snapshotter/pkg/utils/mount"
+)
+
+type Manager struct {
+	store            Store
+	nydusdBinaryPath string
+	daemonMode       string
+	cacheDir         string
+
+	mounter mount.Interface
+	mu      sync.Mutex
+}
+
+type Opt struct {
+	NydusdBinaryPath string
+	Database         *store.Database
+	DaemonMode       string
+	CacheDir         string
+}
+
+func NewManager(opt Opt) (*Manager, error) {
+	s, err := store.NewDaemonStore(opt.Database)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Manager{
+		store:            s,
+		mounter:          &mount.Mounter{},
+		nydusdBinaryPath: opt.NydusdBinaryPath,
+		daemonMode:       opt.DaemonMode,
+		cacheDir:         opt.CacheDir,
+	}, nil
+}
+
+func (m *Manager) NewDaemon(daemon *daemon.Daemon) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, err := m.store.GetBySnapshot(daemon.SnapshotID)
+	if err == nil && d != nil {
+		return errdefs.ErrAlreadyExists
+	}
+	return m.store.Add(daemon)
+}
+
+func (m *Manager) DeleteBySnapshotID(id string) (*daemon.Daemon, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.store.GetBySnapshot(id)
+	if err != nil {
+		return nil, err
+	}
+	m.store.Delete(s)
+	return s, nil
+}
+
+func (m *Manager) GetBySnapshotID(id string) (*daemon.Daemon, error) {
+	return m.store.GetBySnapshot(id)
+}
+
+func (m *Manager) GetByID(id string) (*daemon.Daemon, error) {
+	return m.store.Get(id)
+}
+
+func (m *Manager) DeleteDaemon(daemon *daemon.Daemon) {
+	if daemon == nil {
+		return
+	}
+	m.store.Delete(daemon)
+}
+
+func (m *Manager) ListDaemons() []*daemon.Daemon {
+	return m.store.List()
+}
+
+func (m *Manager) CleanUpDaemonResource(d *daemon.Daemon) {
+	resource := []string{d.ConfigDir, d.LogDir}
+	if d.IsMultipleDaemon() {
+		resource = append(resource, d.SocketDir)
+	}
+	for _, dir := range resource {
+		if err := os.RemoveAll(dir); err != nil {
+			log.L.Errorf("failed to remove dir %s err %v", dir, err)
+		}
+	}
+}
+
+func (m *Manager) StartDaemon(d *daemon.Daemon) error {
+	// if cg != nil {
+	// 	err := cg(d)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
+	cmd, err := m.buildStartCommand(d)
+	if err != nil {
+		return errors.Wrap(err, fmt.Sprintf("failed to create start command for daemon %s", d.ID))
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	d.Pid = cmd.Process.Pid
+	err = m.store.Update(d)
+	if err != nil {
+		// Nothing we can do, just ignore it for now
+		log.L.Errorf("fail to update daemon info (%+v) to db: %v", d, err)
+	}
+	// process wait when destroy daemon and kill process
+	return nil
+
+}
+
+func (m *Manager) buildStartCommand(d *daemon.Daemon) (*exec.Cmd, error) {
+	var args []string
+	if d.DaemonBackend == config.DaemonBackendFscache {
+		args = []string{
+			"daemon",
+			"--apisock", d.GetAPISock(),
+			"--fscache", m.cacheDir,
+			"--log-level", d.LogLevel,
+		}
+	} else {
+		args = []string{
+			"--apisock", d.GetAPISock(),
+			"--log-level", d.LogLevel,
+		}
+		nydusdThreadNum := d.NydusdThreadNum()
+		if nydusdThreadNum != "" {
+			args = append(args, "--thread-num", nydusdThreadNum)
+		}
+
+		if !d.LogToStdout {
+			args = append(args, "--log-file", d.LogFile())
+		}
+		if d.IsMultipleDaemon() {
+			bootstrap, err := d.BootstrapFile()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args,
+				"--config",
+				d.ConfigFile(),
+				"--bootstrap",
+				bootstrap,
+				"--mountpoint",
+				d.MountPoint(),
+			)
+		} else if m.isOneDaemon() {
+			args = append(args,
+				"--mountpoint",
+				*d.RootMountPoint,
+			)
+		} else {
+			return nil, errors.Errorf("DaemonMode %s doesn't have daemon configured", d.DaemonMode)
+		}
+	}
+
+	log.L.Infof("start nydus daemon: %s %s", m.nydusdBinaryPath, strings.Join(args, " "))
+
+	cmd := exec.Command(m.nydusdBinaryPath, args...)
+	if d.LogToStdout {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stdout
+	}
+	return cmd, nil
+}
+
+func (m *Manager) DestroyBySnapshotID(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, err := m.store.GetBySnapshot(id)
+	if err != nil {
+		return err
+	}
+	return m.DestroyDaemon(d)
+}
+
+// FIXME: should handle the inconsistent status caused by any step
+// in the function that returns an error.
+func (m *Manager) DestroyDaemon(d *daemon.Daemon) error {
+	cleanup := func() error {
+		m.CleanUpDaemonResource(d)
+		if err := m.store.Delete(d); err != nil {
+			return errors.Wrap(err, "delete daemon in store")
+		}
+		return nil
+	}
+
+	// if daemon is shared mount or use shared mount to do
+	// prefetch, we should only umount the daemon with api instead
+	// of umount entire mountpoint
+	if m.isOneDaemon() {
+		log.L.Infof("umount remote snapshot for shared daemon, mountpoint %s", d.SharedMountPoint())
+		if err := d.SharedUmount(); err != nil {
+			return errors.Wrap(err, "shared umount on destroying daemon")
+		}
+		return cleanup()
+	}
+
+	log.L.Infof("umount remote snapshot, mountpoint %s", d.MountPoint())
+	// if we found pid here, we need to kill and wait process to exit, Pid=0 means somehow we lost
+	// the daemon pid, so that we can't kill the process, just roughly umount the mountpoint
+	if d.Pid > 0 {
+		p, err := os.FindProcess(d.Pid)
+		if err != nil {
+			return errors.Wrapf(err, "find process %d", d.Pid)
+		}
+		if err = p.Signal(syscall.SIGTERM); err != nil {
+			return errors.Wrapf(err, "send SIGTERM signal to process %d", d.Pid)
+		}
+		// if nydus-snapshotter restart, it will break the relationship between nydusd and
+		// nydus-snapshotter, p.Wait() will return err, so here should exclude this case
+		if _, err = p.Wait(); err != nil && !stderrors.Is(err, syscall.ECHILD) {
+			log.L.Errorf("failed to process wait, %v", err)
+		}
+	}
+	// for backward compatible, here umount <snapshotdir>/<id>/fs and <snapshotdir>/<id>/mnt
+	// if mountpoint not exist, Umount will return nil
+	mps := []string{d.MountPoint(), d.OldMountPoint()}
+	for _, mp := range mps {
+		if err := m.mounter.Umount(mp); err != nil && err != syscall.EINVAL {
+			return errors.Wrap(err, fmt.Sprintf("failed to umount mountpoint %s", mp))
+		}
+	}
+
+	return cleanup()
+}
+
+func (m *Manager) isOneDaemon() bool {
+	return m.daemonMode == config.DaemonModeShared ||
+		m.daemonMode == config.DaemonModePrefetch
+}
+
+func (m *Manager) isNoneDaemon() bool {
+	return m.daemonMode == config.DaemonModeNone
+}
+
+func (m *Manager) IsSharedDaemon() bool {
+	return m.daemonMode == config.DaemonModeShared
+}
+
+func (m *Manager) IsPrefetchDaemon() bool {
+	return m.daemonMode == config.DaemonModePrefetch
+}
+
+// Reconnect already running daemons，and rebuild daemons management structs.
+func (m *Manager) Reconnect(ctx context.Context) error {
+	var (
+		daemons      []*daemon.Daemon
+		sharedDaemon *daemon.Daemon
+	)
+
+	if m.isNoneDaemon() {
+		return nil
+	}
+
+	if err := m.store.WalkDaemons(ctx, func(d *daemon.Daemon) error {
+		log.L.WithField("daemon", d.ID).
+			WithField("mode", d.DaemonMode).
+			Info("found daemon in database")
+
+		d.Once = &sync.Once{}
+		// Do not check status on virtual daemons
+		if m.isOneDaemon() && d.ID != daemon.SharedNydusDaemonID {
+			daemons = append(daemons, d)
+			log.L.WithField("daemon", d.ID).Infof("found virtual daemon")
+			return nil
+		}
+		info, err := d.CheckStatus()
+		if err != nil {
+			log.L.WithField("daemon", d.ID).Warnf("failed to check daemon status: %v", err)
+			return nil
+		}
+		if !info.Running() {
+			log.L.WithField("daemon", d.ID).Warnf("daemon is not running: %v", info)
+			return nil
+		}
+		log.L.WithField("daemon", d.ID).Infof("found alive daemon")
+		daemons = append(daemons, d)
+
+		// Get the global shared daemon here after CheckStatus() by attention
+		// so that we're sure it's alive.
+		if d.ID == daemon.SharedNydusDaemonID {
+			sharedDaemon = d
+		}
+
+		return nil
+	}); err != nil {
+		return errors.Wrapf(err, "failed to walk daemons to reconnect")
+	}
+
+	if !m.isOneDaemon() && sharedDaemon != nil {
+		return errors.Errorf("SharedDaemon or PrefetchDaemon disabled, but shared daemon is found")
+	}
+
+	if m.isOneDaemon() && sharedDaemon == nil && len(daemons) > 0 {
+		log.L.Warnf("SharedDaemon or PrefetchDaemon enabled, but cannot find alive shared daemon")
+		// Clear daemon list to skip adding them into daemon store
+		daemons = nil
+	}
+
+	// cleanup database so that we'll have a clean database for this snapshotter process lifetime
+	log.L.Infof("found %d daemons running", len(daemons))
+	if err := m.store.CleanupDaemons(ctx); err != nil {
+		return errors.Wrapf(err, "failed to cleanup database")
+	}
+
+	for _, d := range daemons {
+		if err := m.NewDaemon(d); err != nil {
+			return errors.Wrapf(err, "failed to add daemon(%s) to daemon store", d.ID)
+		}
+	}
+
+	return nil
+}
