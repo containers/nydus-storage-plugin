@@ -61,7 +61,7 @@ func RegistryHostsFromConfig(credsFuncs ...Credential) source.RegistryHosts {
 				Host:         h.Host,
 				Scheme:       "https",
 				Path:         "/v2",
-				Capabilities: docker.HostCapabilityPull | docker.HostCapabilityResolve,
+				Capabilities: docker.HostCapabilityPull | docker.HostCapabilityResolve, // Push?
 				Authorizer: docker.NewDockerAuthorizer(
 					docker.WithAuthClient(tr),
 					docker.WithAuthCreds(multiCredsFuncs(ref, credsFuncs...))),
