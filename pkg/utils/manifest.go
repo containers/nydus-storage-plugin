@@ -1,6 +1,6 @@
 // Ported from stargz-snapshotter, copyright The stargz-snapshotter Authors.
 // https://github.com/containerd/stargz-snapshotter/blob/6fb41553e735eb6369bb3718d4b841bfacb423aa/util/containerdutil/manifest.go#L119-L158
-package utils
+package manifestutil
 
 import (
 	"encoding/json"

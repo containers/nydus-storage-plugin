@@ -50,11 +50,11 @@ func layerToAttr(l *ocispec.Descriptor, out *fuse.Attr) fusefs.StableAttr {
 		out.Blocks++
 	}
 	out.Nlink = 1
-	out.Mode = layerFileMode
+	out.Mode = fuse.S_IFREG | layerFileMode // include file type + perms
 	out.Owner = fuse.Owner{Uid: 0, Gid: 0}
 
 	return fusefs.StableAttr{
-		Mode: out.Mode,
+		Mode: fuse.S_IFREG, // file type here
 	}
 }
 
@@ -68,10 +68,10 @@ func defaultFileAttr(size uint64, out *fuse.Attr) fusefs.StableAttr {
 		out.Blocks++
 	}
 	out.Nlink = 1
-	out.Mode = defaultFileMode
+	out.Mode = fuse.S_IFREG | defaultFileMode // include file type + perms
 	out.Owner = fuse.Owner{Uid: 0, Gid: 0}
 	return fusefs.StableAttr{
-		Mode: out.Mode,
+		Mode: fuse.S_IFREG, // file type here
 	}
 }
 
@@ -79,10 +79,10 @@ func defaultFileAttr(size uint64, out *fuse.Attr) fusefs.StableAttr {
 // https://github.com/containerd/stargz-snapshotter/blob/efc4166e93a22804b90e27c912eff7ecc0a12dfc/store/fs.go#L557
 func defaultDirAttr(out *fuse.Attr) fusefs.StableAttr {
 	out.Size = 0
-	out.Mode = defaultDirMode
+	out.Mode = fuse.S_IFDIR | defaultDirMode // include dir type + perms
 	out.Owner = fuse.Owner{Uid: 0, Gid: 0}
 	return fusefs.StableAttr{
-		Mode: out.Mode,
+		Mode: fuse.S_IFDIR, // directory type here
 	}
 }
 
@@ -90,9 +90,9 @@ func defaultDirAttr(out *fuse.Attr) fusefs.StableAttr {
 // https://github.com/containerd/stargz-snapshotter/blob/efc4166e93a22804b90e27c912eff7ecc0a12dfc/store/fs.go#L575
 func defaultLinkAttr(out *fuse.Attr) fusefs.StableAttr {
 	out.Size = 0
-	out.Mode = defaultLinkMode
+	out.Mode = fuse.S_IFLNK | defaultLinkMode // include symlink type + perms
 	out.Owner = fuse.Owner{Uid: 0, Gid: 0}
 	return fusefs.StableAttr{
-		Mode: out.Mode,
+		Mode: fuse.S_IFLNK, // symlink type here
 	}
 }

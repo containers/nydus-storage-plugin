@@ -23,7 +23,7 @@ type LRUCache struct {
 // NewLRUCache creates new lru cache.
 func NewLRUCache(maxEntries int) *LRUCache {
 	inner := lru.New(maxEntries)
-	inner.OnEvicted = func(key lru.Key, value interface{}) {
+	inner.OnEvicted = func(_ lru.Key, value interface{}) {
 		// Decrease the ref count incremented in Add().
 		// When nobody refers to this value, this value will be finalized via refCounter.
 		value.(*refCounter).finalize()

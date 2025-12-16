@@ -4,9 +4,9 @@ package fs
 
 import (
 	"context"
+	"log/slog"
 	"syscall"
 
-	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/reference"
 	fusefs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -28,21 +28,21 @@ var _ = (fusefs.NodeRmdirer)((*refNode)(nil))
 
 func (n *refNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
 	// lookup on memory nodes
-	log.L.WithContext(ctx).Debugf("ref node lookup name = %s", name)
+	slog.InfoContext(ctx, "ref node lookup", "name", name)
 	if child := n.GetChild(name); child != nil {
 		switch tn := child.Operations().(type) {
 		case *layerNode:
 			copyAttr(&out.Attr, &tn.attr)
 		default:
-			log.G(ctx).Warn("rootnode.Lookup: uknown node type detected")
+			slog.WarnContext(ctx, "rootnode.Lookup: unknown node type detected")
 			return nil, syscall.EIO
 		}
-		out.Attr.Ino = child.StableAttr().Ino
+		out.Ino = child.StableAttr().Ino
 		return child, 0
 	}
 	targetDigest, err := digest.Parse(name)
 	if err != nil {
-		log.G(ctx).WithError(err).Errorf("invalid digest for %q", name)
+		slog.ErrorContext(ctx, "invalid digest", "name", name, "err", err)
 		return nil, syscall.EINVAL
 	}
 	sAttr := defaultDirAttr(&out.Attr)
@@ -53,7 +53,7 @@ func (n *refNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (
 	}
 	copyAttr(&child.attr, &out.Attr)
 	return n.fs.newInodeWithID(ctx, func(ino uint32) fusefs.InodeEmbedder {
-		out.Attr.Ino = uint64(ino)
+		out.Ino = uint64(ino)
 		child.attr.Ino = uint64(ino)
 		sAttr.Ino = uint64(ino)
 		return n.NewInode(ctx, child, sAttr)
@@ -63,12 +63,12 @@ func (n *refNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (
 func (n *refNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 	targetDigest, err := digest.Parse(name)
 	if err != nil {
-		log.G(ctx).WithError(err).Warnf("invalid digest for %q during release", name)
+		slog.WarnContext(ctx, "invalid digest during release", "name", name, "err", err)
 		return syscall.EINVAL
 	}
 	current, err := n.fs.layManager.Release(ctx, n.ref, targetDigest, n.rawRef)
 	if err != nil {
-		log.G(ctx).WithError(err).Warnf("failed to release layer %v / %v", n.ref, targetDigest)
+		slog.WarnContext(ctx, "failed to release layer", "ref", n.ref.String(), "digest", targetDigest.String(), "err", err)
 		return syscall.EIO
 	}
 	if current == 0 {
@@ -76,7 +76,7 @@ func (n *refNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 		lh, ok := n.fs.knownNode[n.ref.String()][targetDigest.String()]
 		if !ok {
 			n.fs.knownNodeMu.Unlock()
-			log.G(ctx).WithError(err).Warnf("node of layer %v/%v is not registered", n.ref, targetDigest)
+			slog.WarnContext(ctx, "node of layer not registered", "ref", n.ref.String(), "digest", targetDigest.String(), "err", err)
 			return syscall.EIO
 		}
 		lh.release()
@@ -86,6 +86,6 @@ func (n *refNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 		}
 		n.fs.knownNodeMu.Unlock()
 	}
-	log.G(ctx).WithField("refcounter", current).Infof("layer %v/%v is marked as RELEASE", n.ref, targetDigest)
+	slog.InfoContext(ctx, "layer marked RELEASE", "ref", n.ref.String(), "digest", targetDigest.String(), "refcounter", current)
 	return syscall.ENOENT
 }

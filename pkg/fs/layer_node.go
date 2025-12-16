@@ -6,9 +6,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"syscall"
 
-	"github.com/containerd/containerd/log"
 	fusefs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/opencontainers/go-digest"
@@ -24,35 +24,34 @@ type layerNode struct {
 	digest  digest.Digest
 }
 
-var _ = (fusefs.NodeGetattrer)((*diffNode)(nil))
-var _ = (fusefs.InodeEmbedder)((*diffNode)(nil))
 var _ = (fusefs.InodeEmbedder)((*layerNode)(nil))
 var _ = (fusefs.NodeCreater)((*layerNode)(nil))
 var _ = (fusefs.NodeLookuper)((*layerNode)(nil))
+var _ = (fusefs.NodeReaddirer)((*layerNode)(nil))
 
 // Create marks this layer as "using".
 // We don't use refnode.Mkdir because Mkdir event doesn't reach here if layernode already exists.
-func (n *layerNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (node *fusefs.Inode, fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+func (n *layerNode) Create(ctx context.Context, name string, _ uint32, _ uint32, _ *fuse.EntryOut) (node *fusefs.Inode, fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	if name == layerUseFile {
 		current := n.fs.layManager.Use(n.refNode.ref, n.digest)
-		log.G(ctx).WithField("refcounter", current).Infof("layer %v / %v is marked as USING", n.refNode.ref, n.digest)
+		slog.InfoContext(ctx, "layer marked USING", "ref", n.refNode.ref.String(), "digest", n.digest.String(), "refcounter", current)
 	}
 	return nil, nil, 0, syscall.ENOENT
 }
 
 // Lookup routes to the target file stored in the pool, based on the specified file name.
 func (n *layerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
-	log.L.WithContext(ctx).Debugf("layer node lookup name = %s", name)
+	slog.InfoContext(ctx, "layer node lookup", "name", name)
 	switch name {
 	case layerInfoLink:
 		info, err := n.fs.layManager.GetLayerInfo(ctx, n.refNode.ref, n.digest)
 		if err != nil {
-			log.G(ctx).WithError(err).Warnf("failed to get layer info for %q: %q", name, n.digest)
+			slog.WarnContext(ctx, "failed to get layer info", "name", name, "digest", n.digest.String(), "err", err)
 			return nil, syscall.EIO
 		}
 		buf := new(bytes.Buffer)
 		if err := json.NewEncoder(buf).Encode(&info); err != nil {
-			log.G(ctx).WithError(err).Warnf("failed to encode layer info for %q: %q", name, n.digest)
+			slog.WarnContext(ctx, "failed to encode layer info", "name", name, "digest", n.digest.String(), "err", err)
 			return nil, syscall.EIO
 		}
 		infoData := buf.Bytes()
@@ -60,7 +59,7 @@ func (n *layerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut)
 		cn := &fusefs.MemRegularFile{Data: infoData}
 		copyAttr(&cn.Attr, &out.Attr)
 		return n.fs.newInodeWithID(ctx, func(ino uint32) fusefs.InodeEmbedder {
-			out.Attr.Ino = uint64(ino)
+			out.Ino = uint64(ino)
 			cn.Attr.Ino = uint64(ino)
 			sAttr.Ino = uint64(ino)
 			return n.NewInode(ctx, cn, sAttr)
@@ -76,8 +75,8 @@ func (n *layerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut)
 				copyAttr(&out.Attr, &ao.Attr)
 				n.fs.knownNodeMu.Unlock()
 				return n.NewInode(ctx, lh.n, fusefs.StableAttr{
-					Mode: out.Attr.Mode,
-					Ino:  out.Attr.Ino,
+					Mode: out.Mode,
+					Ino:  out.Ino,
 				}), 0
 			}
 			n.fs.knownNodeMu.Unlock()
@@ -85,27 +84,38 @@ func (n *layerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut)
 
 		l, err := n.fs.layManager.ResolverMetaLayer(ctx, n.refNode.ref, n.refNode.rawRef, n.digest)
 		if err != nil {
-			return nil, syscall.EIO
+			slog.WarnContext(ctx, "resolve meta layer failed", "err", err)
+			if name == layerLink {
+				return nil, syscall.ENOENT
+			}
 		}
-
 		if name == blobLink {
-			sAttr := layerToAttr(l, &out.Attr)
-			cn := &blobNode{l: l}
+			sAttr := layerToAttr(&l.Descriptor, &out.Attr)
+			cn := &blobNode{l: &l.Descriptor, fs: n.fs, ref: n.refNode.ref}
 			copyAttr(&cn.attr, &out.Attr)
 			return n.fs.newInodeWithID(ctx, func(ino uint32) fusefs.InodeEmbedder {
-				out.Attr.Ino = uint64(ino)
+				out.Ino = uint64(ino)
 				cn.attr.Ino = uint64(ino)
 				sAttr.Ino = uint64(ino)
 				return n.NewInode(ctx, cn, sAttr)
 			})
 		}
 
+		// Only Nydus layers expose a diff directory.
+		// - bootstrap layer: diff is backed by a bind mount to the nydusd mountpoint
+		// - data blob layers: diff is an intentionally empty directory (to satisfy Podman additional layer store expectations)
+		if !l.IsMetaLayer || l.MountFailed {
+			slog.InfoContext(ctx, "not a nydus layer; no diff provided", "digest", n.digest.String())
+			return nil, syscall.ENOENT
+		}
+
+		sAttr := defaultDirAttr(&out.Attr)
 		child := &diffNode{
 			fs: n.fs,
 		}
-		sAttr := defaultDirAttr(&out.Attr)
+		copyAttr(&child.attr, &out.Attr)
 		return n.fs.newInodeWithID(ctx, func(ino uint32) fusefs.InodeEmbedder {
-			out.Attr.Ino = uint64(ino)
+			out.Ino = uint64(ino)
 			child.attr.Ino = uint64(ino)
 			sAttr.Ino = uint64(ino)
 			cn := n.NewInode(ctx, child, sAttr)
@@ -123,10 +133,21 @@ func (n *layerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut)
 			return cn
 		})
 	case layerUseFile:
-		log.G(ctx).Debugf("\"use\" file is referred but return ENOENT for reference management")
+		slog.InfoContext(ctx, "use file referred; returning ENOENT for reference mgmt")
 		return nil, syscall.ENOENT
 	default:
-		log.G(ctx).Warnf("unknown filename %q", name)
+		slog.WarnContext(ctx, "unknown filename", "name", name)
 		return nil, syscall.ENOENT
 	}
+}
+
+// Readdir enumerates expected entries to help consumers like Podman discover files reliably.
+func (n *layerNode) Readdir(_ context.Context) (fusefs.DirStream, syscall.Errno) {
+	entries := []fuse.DirEntry{
+		{Name: layerInfoLink, Mode: fuse.S_IFREG},
+		{Name: blobLink, Mode: fuse.S_IFREG},
+		{Name: layerLink, Mode: fuse.S_IFDIR},
+		{Name: layerUseFile, Mode: fuse.S_IFREG},
+	}
+	return fusefs.NewListDirStream(entries), 0
 }

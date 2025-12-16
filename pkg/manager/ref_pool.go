@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/reference"
 	"github.com/containerd/containerd/remotes"
@@ -23,7 +23,7 @@ import (
 
 	"github.com/containers/nydus-storage-plugin/pkg/cache"
 	"github.com/containers/nydus-storage-plugin/pkg/source"
-	"github.com/containers/nydus-storage-plugin/pkg/utils"
+	manifestutil "github.com/containers/nydus-storage-plugin/pkg/utils"
 )
 
 const (
@@ -45,10 +45,10 @@ func newRefPool(ctx context.Context, root string, hosts source.RegistryHosts) (*
 	p.cache.OnEvicted = func(key string, value interface{}) {
 		refspec := value.(reference.Spec)
 		if err := os.RemoveAll(p.metadataDir(refspec)); err != nil {
-			log.G(ctx).WithField("key", key).WithError(err).Warnf("failed to clean up ref")
+			slog.WarnContext(ctx, "failed to clean up ref", "key", key, "err", err)
 			return
 		}
-		log.G(ctx).WithField("key", key).Debugf("cleaned up ref")
+		slog.DebugContext(ctx, "cleaned up ref", "key", key)
 	}
 	return p, nil
 }
@@ -70,10 +70,10 @@ type releaser struct {
 func (p *refPool) loadRef(ctx context.Context, refspec reference.Spec) (manifest ocispec.Manifest, config ocispec.Image, err error) {
 	manifest, config, err = p.readManifestAndConfig(refspec)
 	if err == nil {
-		log.G(ctx).Debugf("reusing manifest and config of %q", refspec.String())
+		slog.DebugContext(ctx, "reusing manifest and config", "ref", refspec.String())
 		return
 	}
-	log.G(ctx).WithError(err).Debugf("fetching manifest and config of %q", refspec.String())
+	slog.DebugContext(ctx, "fetching manifest and config", "ref", refspec.String(), "err", err)
 	manifest, config, err = p.fetchManifestAndConfig(ctx, refspec)
 	if err != nil {
 		return ocispec.Manifest{}, ocispec.Image{}, err
@@ -152,7 +152,7 @@ func (p *refPool) readManifestAndConfig(refspec reference.Spec) (manifest ocispe
 
 func (p *refPool) writeManifestAndConfig(refspec reference.Spec, manifest ocispec.Manifest, config ocispec.Image) error {
 	mPath, cPath := p.manifestFile(refspec), p.configFile(refspec)
-	log.G(context.TODO()).Infof("mpath = %s, cpath = %s", mPath, cPath)
+	slog.Info("write manifest and config paths", "manifest", mPath, "config", cPath)
 	if err := os.MkdirAll(filepath.Dir(mPath), 0700); err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func fetchManifestPlatform(ctx context.Context, fetcher remotes.Fetcher, desc oc
 		if err != nil {
 			return ocispec.Manifest{}, err
 		}
-		if err := utils.ValidateMediaType(p, desc.MediaType); err != nil {
+		if err := manifestutil.ValidateMediaType(p, desc.MediaType); err != nil {
 			return ocispec.Manifest{}, err
 		}
 		if err := json.Unmarshal(p, &manifest); err != nil {
@@ -258,7 +258,7 @@ func fetchManifestPlatform(ctx context.Context, fetcher remotes.Fetcher, desc oc
 		if err != nil {
 			return ocispec.Manifest{}, err
 		}
-		if err := utils.ValidateMediaType(p, desc.MediaType); err != nil {
+		if err := manifestutil.ValidateMediaType(p, desc.MediaType); err != nil {
 			return ocispec.Manifest{}, err
 		}
 		if err = json.Unmarshal(p, &index); err != nil {

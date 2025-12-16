@@ -9,27 +9,73 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/containerd/containerd/log"
+	"log/slog"
+
 	"github.com/containers/nydus-storage-plugin/pkg/manager"
 	fusefs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 const (
-	defaultLinkMode = syscall.S_IFLNK | 0400 // -r--------
-	defaultDirMode  = syscall.S_IFDIR | 0500 // dr-x------
-	defaultFileMode = 0400                   // -r--------
-	layerFileMode   = 0400                   // -r--------
-	blockSize       = 4096
+	blockSize = 4096
 
 	poolLink      = "pool"
 	layerLink     = "diff"
 	blobLink      = "blob"
 	layerInfoLink = "info"
 	layerUseFile  = "use"
-
-	fusermountBin = "fusermount"
 )
+
+// Configurable FS modes (defaults preserved)
+var (
+	// Permission bits only (no file type bits). File type is set via fuse StableAttr.
+	defaultLinkMode uint32 = 0400 // -r-------- (symlink perms are largely ignored by kernels)
+	defaultDirMode  uint32 = 0500 // dr-x------
+	defaultFileMode uint32 = 0400 // -r--------
+	layerFileMode   uint32 = 0400 // -r--------
+
+	// Mount behavior toggles
+	defaultAllowOther bool = true
+	forceDirectMount  bool = false
+	enableSuidOption  bool = false
+)
+
+// Helpers to expose defaults for CLI parsing
+func DefaultFileMode() uint32 { return defaultFileMode }
+func DefaultDirMode() uint32  { return defaultDirMode }
+func DefaultLinkMode() uint32 { return defaultLinkMode }
+
+// Mount options
+type MountOption func()
+
+// WithModes overrides default FS modes at mount time.
+func WithModes(fileMode, dirMode, linkMode uint32) MountOption {
+	return func() {
+		defaultFileMode = fileMode
+		defaultDirMode = dirMode
+		defaultLinkMode = linkMode
+		layerFileMode = fileMode
+	}
+}
+
+// WithAllowOther toggles the allow_other mount option.
+func WithAllowOther(b bool) MountOption {
+	return func() {
+		defaultAllowOther = b
+	}
+}
+
+// WithDirectMount forces direct mount, bypassing fusermount helpers.
+func WithDirectMount(b bool) MountOption {
+	return func() {
+		forceDirectMount = b
+	}
+}
+
+// WithMountSuid toggles "suid" mount option when using fusermount.
+func WithMountSuid(b bool) MountOption {
+	return func() { enableSuidOption = b }
+}
 
 type releasable interface {
 	releasable() bool
@@ -78,7 +124,14 @@ func (r *inoReleasable) releasable() bool {
 	return r.n.EmbeddedInode().Forgotten()
 }
 
-func Mount(ctx context.Context, mountPoint string, rootDir string, debug bool, layManager *manager.LayerManager) error {
+func Mount(_ context.Context, mountPoint string, _ string, debug bool, layManager *manager.LayerManager, opts ...MountOption) error {
+	// Apply mount options
+	for _, o := range opts {
+		if o != nil {
+			o()
+		}
+	}
+
 	seconds := time.Second
 	rawFS := fusefs.NewNodeFS(&rootNode{
 		fs: &fs{
@@ -92,14 +145,23 @@ func Mount(ctx context.Context, mountPoint string, rootDir string, debug bool, l
 		NullPermissions: true,
 	})
 	mountOpts := &fuse.MountOptions{
-		AllowOther: true, // allow users other than root&mounter to access fs
+		AllowOther: defaultAllowOther, // allow users other than root&mounter to access fs
 		FsName:     "nydusstore",
 		Debug:      debug,
 	}
-	if _, err := exec.LookPath(fusermountBin); err == nil {
-		mountOpts.Options = []string{"suid"} // option for fusermount; allow setuid inside container
+	// Detect fusermount or fusermount3; fallback to direct mount if neither present
+	if hasFusermount() && !forceDirectMount {
+		if enableSuidOption {
+			mountOpts.Options = append(mountOpts.Options, "suid") // optional
+		}
+		slog.Info("using fusermount helper", "allowOther", mountOpts.AllowOther)
 	} else {
-		log.L.WithError(err).Debugf("%s not installed; trying direct mount", fusermountBin)
+		if !hasFusermount() {
+			slog.Info("fusermount/fusermount3 not installed; trying direct mount")
+		}
+		if forceDirectMount {
+			slog.Info("forcing direct mount per option")
+		}
 		mountOpts.DirectMount = true
 	}
 	server, err := fuse.NewServer(rawFS, mountPoint, mountOpts)
@@ -110,13 +172,23 @@ func Mount(ctx context.Context, mountPoint string, rootDir string, debug bool, l
 	return server.WaitMount()
 }
 
+func hasFusermount() bool {
+	if _, err := exec.LookPath("fusermount"); err == nil {
+		return true
+	}
+	if _, err := exec.LookPath("fusermount3"); err == nil {
+		return true
+	}
+	return false
+}
+
 func (fs *fs) newInodeWithID(ctx context.Context, p func(uint32) fusefs.InodeEmbedder) (*fusefs.Inode, syscall.Errno) {
 	var ino fusefs.InodeEmbedder
 	if err := fs.nodeMap.add(func(id uint32) (releasable, error) {
 		ino = p(id)
 		return &inoReleasable{ino}, nil
 	}); err != nil || ino == nil {
-		log.L.WithContext(ctx).WithError(err).Debug("cannot generate ID")
+		slog.DebugContext(ctx, "cannot generate ID", "err", err)
 		return nil, syscall.EIO
 	}
 	return ino.EmbeddedInode(), 0

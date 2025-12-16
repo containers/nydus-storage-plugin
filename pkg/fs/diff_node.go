@@ -15,7 +15,7 @@ type diffNode struct {
 	fs   *fs
 }
 
-func (n *diffNode) Getattr(ctx context.Context, f fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+func (n *diffNode) Getattr(_ context.Context, _ fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	copyAttr(&out.Attr, &n.attr)
 	return 0
 }

@@ -24,17 +24,17 @@ func (m *idMap) add(p func(uint32) (releasable, error)) error {
 	m.cleanupG.Do("cleanup", func() (interface{}, error) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		max := uint32(0)
+		maxID := uint32(0)
 		for i := uint32(0); i <= m.max; i++ {
 			if e, ok := m.m[i]; ok {
 				if e.releasable() {
 					delete(m.m, i)
 				} else {
-					max = i
+					maxID = i
 				}
 			}
 		}
-		m.max = max
+		m.max = maxID
 		return nil, nil
 	})
 
